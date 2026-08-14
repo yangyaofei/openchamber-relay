@@ -1,0 +1,28 @@
+# ============================================================
+# 用法 B：纯 Relay — 只部署中继服务
+#
+# 适合在公网 VPS 上跑一个 Relay，任何 OpenChamber 实例（桌面 App 或
+# 自托管 server）把它设置为自己的 Relay 地址（OPENCHAMBER_RELAY_URL /
+# 客户端配对时填入），远程客户端即可穿透 NAT 连接。
+#
+# First run:  cp .env.example .env  (按需修改 RELAY_*), then
+#             docker compose -f docker-compose.relay.yml up -d
+#
+# 对外暴露建议二选一：
+#   1. 前置任意支持 WebSocket 的反向代理提供 wss（推荐）
+#   2. RELAY_BIND=0.0.0.0 裸跑（客户端用 ws:// 明文，仅测试用）
+# ============================================================
+
+services:
+  relay:
+    image: ${RELAY_IMAGE:-ghcr.io/yangyaofei/openchamber-relay/relay:latest}
+    # build:
+    #   context: relay
+    #   dockerfile: ../docker/relay.Dockerfile
+    container_name: openchamber-relay
+    ports:
+      - "${RELAY_BIND:-127.0.0.1}:${RELAY_PORT:-23001}:8080"
+    environment:
+      - PORT=8080
+      - RELAY_VERIFY_AUTH=${RELAY_VERIFY_AUTH:-false}
+    restart: unless-stopped

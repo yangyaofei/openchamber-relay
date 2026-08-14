@@ -1,0 +1,104 @@
+name: openchamber-image
+
+# Track upstream @openchamber/web releases on npm and build a runtime image
+# for every new version.
+# - schedule: poll npm dist-tags.latest every 6 hours
+# - workflow_dispatch: build a specific version manually
+# A git tag `openchamber-vX.Y.Z` is created for each published build and used
+# to skip versions that were already built.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '@openchamber/web version (e.g. 1.2.3 or latest)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/openchamber
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      build: ${{ steps.resolve.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and skip-already-built
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "latest" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="$(npm view @openchamber/web dist-tags.latest)"
+          fi
+          VERSION="${VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            echo "failed to resolve version" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "resolved version: $VERSION"
+
+          TAG="openchamber-v$VERSION"
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag $TAG exists locally; skipping build"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          elif gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag $TAG exists on remote; skipping build"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/openchamber.Dockerfile
+          push: true
+          build-args: |
+            OPENCHAMBER_VERSION=${{ needs.resolve.outputs.version }}
+          tags: |
+            ${{ env.IMAGE }}:v${{ needs.resolve.outputs.version }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Tag the built version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "openchamber-v$VERSION" -m "Build OpenChamber image for @openchamber/web@$VERSION"
+          git push origin "openchamber-v$VERSION"

@@ -1,0 +1,55 @@
+# ============================================================
+# 用法 A：合体模式 — OpenChamber 服务 + Relay 同机部署
+#
+# First run:  cp .env.example .env  (edit values), then
+#             docker compose up -d
+#
+# By default both services use prebuilt images from GHCR. To build locally
+# instead, replace the `image:` line of a service with the commented
+# `build:` block.
+#
+# 只想部署纯 Relay？见 docker-compose.relay.yml（用法 B）。
+# ============================================================
+
+services:
+  openchamber:
+    image: ${OPENCHAMBER_IMAGE:-ghcr.io/yangyaofei/openchamber-relay/openchamber:latest}
+    # build:
+    #   context: .
+    #   dockerfile: docker/openchamber.Dockerfile
+    #   args:
+    #     OPENCHAMBER_VERSION: latest
+    container_name: openchamber
+    hostname: ${OPENCHAMBER_HOSTNAME:-openchamber}
+    ports:
+      - "${OPENCHAMBER_BIND:-127.0.0.1}:${OPENCHAMBER_PORT:-23000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data/openchamber:/home/openchamber/.config/openchamber
+      - ./data/ssh:/home/openchamber/.ssh
+      - ${OPENCHAMBER_WORKSPACES_DIR:-./workspaces}:/home/openchamber/workspaces
+      # 可选：把宿主机目录挂进容器（按需放开）
+      # - /mnt:/mnt
+      # 可选：复用宿主机 opencode 登录凭据（只读）
+      # - ${HOME}/.local/share/opencode/auth.json:/home/openchamber/.local/share/opencode/auth.json:ro
+    environment:
+      - OPENCODE_HOST=${OPENCODE_HOST:-http://host.docker.internal:4096}
+      - OPENCODE_SKIP_START=${OPENCODE_SKIP_START:-true}
+      - OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD:?OPENCODE_SERVER_PASSWORD must be set in .env}
+      - OPENCHAMBER_UI_PASSWORD=${OPENCHAMBER_UI_PASSWORD:?OPENCHAMBER_UI_PASSWORD must be set in .env}
+      - OPENCHAMBER_RELAY_URL=${OPENCHAMBER_RELAY_URL:-}
+    restart: unless-stopped
+
+  relay:
+    image: ${RELAY_IMAGE:-ghcr.io/yangyaofei/openchamber-relay/relay:latest}
+    # build:
+    #   context: relay
+    #   dockerfile: ../docker/relay.Dockerfile
+    container_name: openchamber-relay
+    ports:
+      - "${RELAY_BIND:-127.0.0.1}:${RELAY_PORT:-23001}:8080"
+    environment:
+      - PORT=8080
+      - RELAY_VERIFY_AUTH=${RELAY_VERIFY_AUTH:-false}
+    restart: unless-stopped

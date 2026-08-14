@@ -1,0 +1,9 @@
+{
+  "name": "openchamber-relay-smoke",
+  "private": true,
+  "type": "module",
+  "description": "Smoke test for the OpenChamber relay (node test/smoke.mjs)",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

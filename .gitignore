@@ -1,0 +1,20 @@
+# 环境与密钥
+.env
+*.key
+*.crt
+
+# 运行时数据
+data/
+workspaces/
+
+# Node
+node_modules/
+
+# Go
+relay/relay
+relay/relay-*
+*.test
+
+# 日志与临时文件
+*.log
+tmp/
