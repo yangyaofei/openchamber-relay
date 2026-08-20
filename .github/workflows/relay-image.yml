@@ -118,7 +118,7 @@ jobs:
         with:
           path: dist
           pattern: relay-bin-*
-          merge-mkdirs: true
+          merge-multiple: true
 
       - name: Checksums
         working-directory: dist
