@@ -120,10 +120,22 @@ openchamber-relay/
 
 ## CI / CD
 
-| Workflow | 触发 | 产物 |
-|---|---|---|
-| `openchamber-image` | 每 6 小时轮询 npm `@openchamber/web`；支持手动指定版本 | `ghcr.io/<repo>/openchamber:vX.Y.Z` + `:latest`，并打 tag `openchamber-vX.Y.Z` 防重复构建 |
-| `relay-image` | `relay/**` 变更合入 main；或打 `v*` tag | `ghcr.io/<repo>/relay:latest` / `:vX.Y.Z` |
+两条互相独立的发布节奏，各管各的产物：
+
+**Relay（本仓库自己的 release）**
+
+| 触发 | 产物 |
+|---|---|
+| push 到 `main`（relay 有变更） | 多架构镜像 `relay:sha-<commit>` 推 GHCR，不带版本 tag |
+| 打 tag `vX.Y.Z` | 镜像 `relay:vX.Y.Z` + `relay:latest` 推 GHCR，并创建 GitHub Release，附交叉编译二进制：`linux/{amd64,arm64,arm,386}`、`darwin/{amd64,arm64}`（tar.gz + checksums） |
+
+**OpenChamber 镜像（跟踪上游，与本仓库 git tag 完全解耦）**
+
+| 触发 | 产物 |
+|---|---|
+| 每 6 小时轮询 npm `@openchamber/web` | 把 npm 版本列表与 GHCR 已有镜像 tag 做差集，缺失的逐个构建（默认回补最近 20 个版本，新到旧；手动触发可指定版本/窗口） |
+
+上游每个 release 版本恰好对应一个 `openchamber:vX.Y.Z` 镜像 tag；`openchamber:latest` 始终指向最新上游版本；上游发多少版本都不会在本仓库产生 git tag。过老的 npm 版本若已无法正常安装，构建失败会自动跳过——只有最新版本是必须成功的。
 
 部署机更新：
 

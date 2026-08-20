@@ -129,10 +129,22 @@ openchamber-relay/
 
 ## CI / CD
 
-| Workflow | Trigger | Artifacts |
-|---|---|---|
-| `openchamber-image` | Polls npm `@openchamber/web` every 6h; manual dispatch with a specific version | `ghcr.io/<repo>/openchamber:vX.Y.Z` + `:latest`, tags `openchamber-vX.Y.Z` to skip already-built versions |
-| `relay-image` | `relay/**` changes merged to main; or `v*` tag | `ghcr.io/<repo>/relay:latest` / `:vX.Y.Z` |
+Two independent release cadences, one per artifact:
+
+**Relay (this repo's own releases)**
+
+| Trigger | What happens |
+|---|---|
+| push to `main` (relay changes) | multi-arch image `relay:sha-<commit>` on GHCR — no version tag |
+| push tag `vX.Y.Z` | image `relay:vX.Y.Z` + `relay:latest` on GHCR, plus a GitHub Release with cross-compiled binaries: `linux/{amd64,arm64,arm,386}`, `darwin/{amd64,arm64}` (tar.gz + checksums) |
+
+**OpenChamber image (tracks upstream, decoupled from this repo's git tags)**
+
+| Trigger | What happens |
+|---|---|
+| every 6h poll of npm `@openchamber/web` | diffs npm versions against the image tags already in GHCR and builds every missing one, newest first (rolling window of 20 recent versions; manual dispatch can override version/window) |
+
+Every upstream release version gets exactly one `openchamber:vX.Y.Z` image tag; `openchamber:latest` always points at the newest upstream version. This repo's git tag space stays untouched by upstream. Very old npm versions that no longer install cleanly fail and are skipped automatically — only the latest version is mandatory.
 
 Updating a deployment:
 
