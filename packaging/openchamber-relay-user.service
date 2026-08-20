@@ -1,0 +1,30 @@
+# openchamber-relay — user scope unit (no sudo required at runtime)
+#
+# Install: mkdir -p ~/.config/systemd/user
+#          cp openchamber-relay-user.service ~/.config/systemd/user/openchamber-relay.service
+#          (deb/rpm users: already at /usr/lib/systemd/user/openchamber-relay.service)
+# Start:   systemctl --user daemon-reload
+#          systemctl --user enable --now openchamber-relay
+# Boot:    loginctl enable-linger $USER   (keep running after logout / at boot)
+#
+# Note: binary is expected at ~/.local/bin/openchamber-relay (see README).
+
+[Unit]
+Description=OpenChamber Relay (WebSocket relay for OpenChamber)
+Documentation=https://github.com/yangyaofei/openchamber-relay
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/openchamber-relay
+Environment=PORT=8080
+Environment=RELAY_VERIFY_AUTH=false
+# Override the above via a drop-in if needed:
+#   mkdir -p ~/.config/systemd/user/openchamber-relay.service.d
+#   printf '[Service]\nEnvironment=PORT=9000\n' \
+#     > ~/.config/systemd/user/openchamber-relay.service.d/override.conf
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,72 @@
+version: 2
+
+project_name: openchamber-relay
+
+builds:
+  - id: relay
+    main: ./relay
+    binary: openchamber-relay
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64, arm, "386"]
+    goarm: ["7"]
+    ldflags:
+      - -s -w
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+archives:
+  - id: relay
+    ids: [relay]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - src: packaging/*
+        strip_parent: true
+    formats: [tar.gz]
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-snapshot'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^chore:'
+      - '^ci:'
+
+nfpms:
+  - id: relay
+    package_name: openchamber-relay
+    ids: [relay]
+    formats: [deb, rpm]
+    vendor: yangyaofei
+    homepage: https://github.com/yangyaofei/openchamber-relay
+    maintainer: yangyaofei <yangyaofei@users.noreply.github.com>
+    description: |-
+      WebSocket relay for OpenChamber.
+      Lets remote OpenChamber clients reach a self-hosted OpenChamber
+      instance through NAT or firewalls. Ships both a system-scope and a
+      user-scope systemd unit; the service itself is not started
+      automatically — pick a scope and enable it yourself.
+    license: MIT
+    contents:
+      # system scope
+      - src: packaging/openchamber-relay.service
+        dst: /usr/lib/systemd/system/openchamber-relay.service
+        type: config
+      - src: packaging/openchamber-relay.env
+        dst: /etc/openchamber-relay/env
+        type: config|noreplace
+      # user scope (same unit name under the user search path)
+      - src: packaging/openchamber-relay-user.service
+        dst: /usr/lib/systemd/user/openchamber-relay.service
+        type: config
+
+release:
+  draft: false
+  prerelease: auto
+  mode: keep-existing

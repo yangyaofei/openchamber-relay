@@ -3,8 +3,11 @@ name: relay-image
 # Relay build & release pipeline.
 #
 # push to master (relay changes) -> multi-arch image tagged sha-<short> (no version tag)
-# tag v*                      -> multi-arch image vX.Y.Z + :latest
-#                               + GitHub Release with cross-compiled binaries
+# tag v*                       -> multi-arch image vX.Y.Z + :latest
+#                                + GoReleaser GitHub Release:
+#                                  tar.gz binaries (linux/darwin x amd64/arm64/arm/386,
+#                                  each shipping both systemd units),
+#                                  deb + rpm packages (system & user units included)
 
 on:
   push:
@@ -12,7 +15,9 @@ on:
     tags: ['v*']
     paths:
       - 'relay/**'
+      - 'packaging/**'
       - 'docker/relay.Dockerfile'
+      - '.goreleaser.yml'
       - '.github/workflows/relay-image.yml'
   workflow_dispatch:
 
@@ -25,6 +30,8 @@ env:
 
 jobs:
   build-image:
+    # Docker image for every push; version tags on release tags only.
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,87 +54,59 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute tags
-        id: tags
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF#refs/tags/v}"
-            echo "tags=${IMAGE}:v${version},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "tags=${IMAGE}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: docker/build-push-action@v6
         with:
           context: relay
           file: docker/relay.Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  release-binaries:
-    # Attach cross-compiled relay binaries to a GitHub Release (tag builds only).
+  release:
+    # GoReleaser: binaries + deb/rpm + docker image vX.Y.Z & latest.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-image
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { goos: linux,  goarch: amd64 }
-          - { goos: linux,  goarch: arm64 }
-          - { goos: linux,  goarch: arm }
-          - { goos: linux,  goarch: "386" }
-          - { goos: darwin, goarch: amd64 }
-          - { goos: darwin, goarch: arm64 }
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: relay/go.mod
           cache-dependency-path: relay/go.sum
 
-      - name: Build
+      - name: Vet
+        run: go vet ./...
         working-directory: relay
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: 2
+          args: release --clean
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push versioned image
+        # goreleaser only handles single-arch docker; use buildx for multi-arch.
         run: |
           version="${GITHUB_REF#refs/tags/v}"
-          name="openchamber-relay_${version}_${GOOS}_${GOARCH}"
-          mkdir -p "dist/${name}"
-          go build -trimpath -ldflags="-s -w" -o "dist/${name}/openchamber-relay" .
-          tar -C "dist/${name}" -czf "dist/${name}.tar.gz" openchamber-relay
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: relay-bin-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: relay/dist/*.tar.gz
-          if-no-files-found: error
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: release-binaries
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: relay-bin-*
-          merge-multiple: true
-
-      - name: Checksums
-        working-directory: dist
-        run: |
-          sha256sum ./*.tar.gz > checksums.txt
-          cat checksums.txt
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.tar.gz
-            dist/checksums.txt
+          docker buildx build \
+            --file docker/relay.Dockerfile \
+            --platform linux/amd64,linux/arm64 \
+            --tag "${IMAGE}:v${version}" \
+            --tag "${IMAGE}:latest" \
+            --push \
+            relay

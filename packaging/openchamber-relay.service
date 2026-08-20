@@ -1,0 +1,36 @@
+# openchamber-relay — system scope unit
+#
+# Install: sudo cp openchamber-relay.service /etc/systemd/system/
+#          (deb/rpm users: the file is already at /usr/lib/systemd/system/)
+# Start:   sudo systemctl daemon-reload
+#          sudo systemctl enable --now openchamber-relay
+# Config:  /etc/openchamber-relay/env  (PORT, RELAY_VERIFY_AUTH)
+
+[Unit]
+Description=OpenChamber Relay (WebSocket relay for OpenChamber)
+Documentation=https://github.com/yangyaofei/openchamber-relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/openchamber-relay
+EnvironmentFile=/etc/openchamber-relay/env
+Restart=always
+RestartSec=3
+
+# Hardening: transient runtime user, no shell, no root filesystem writes.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

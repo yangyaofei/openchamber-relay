@@ -102,11 +102,81 @@ Containers bind loopback by default. The relay's WebSocket endpoint is
 - **Reverse proxy + TLS (recommended)**: any WebSocket-capable proxy
   (Nginx, Caddy, Traefik, ...) forwarding to `${RELAY_PORT}`; clients then
   connect via `wss://`;
+- **Tailscale Funnel**: if the machine is already in your tailnet,
+  `tailscale funnel 8080` publishes the port with automatic TLS — no
+  domain, certificate or public IP needed; clients use the provided
+  `https://<machine>.<tailnet>.ts.net` URL;
 - **Bare**: set `RELAY_BIND=0.0.0.0` in `.env`; clients connect with
   `ws://` in plaintext — testing only.
 
 The relay address clients use depends on your exposure setup (domain /
 path / port of your choosing).
+
+## Bare-metal deployment (no Docker)
+
+The relay is a single static binary — Docker is entirely optional. Grab a
+release from [releases](https://github.com/yangyaofei/openchamber-relay/releases)
+(each tar.gz ships the binary **plus both systemd units**), or use
+`go install github.com/yangyaofei/openchamber-relay/relay@latest`.
+
+### Option 1: deb / rpm (needs sudo once, system or user scope your pick)
+
+```bash
+# deb
+sudo apt install ./openchamber-relay_<version>_linux_amd64.deb
+# rpm
+sudo dnf install ./openchamber-relay_<version>_linux_amd64.rpm
+```
+
+The package installs the binary to `/usr/bin/openchamber-relay`, both
+systemd units and `/etc/openchamber-relay/env`. Nothing is started
+automatically — pick a scope:
+
+```bash
+# system scope (runs as a transient user, starts at boot)
+sudo systemctl enable --now openchamber-relay
+
+# user scope (runs as you, no sudo needed from here on)
+systemctl --user enable --now openchamber-relay
+loginctl enable-linger "$USER"   # keep it running after logout / start at boot
+```
+
+### Option 2: tar.gz (no sudo at all)
+
+```bash
+# 1. unpack and put the binary on PATH
+tar -xzf openchamber-relay_<version>_linux_amd64.tar.gz
+mkdir -p ~/.local/bin && mv openchamber-relay ~/.local/bin/
+
+# 2. install the user unit (both unit files are inside the tarball)
+mkdir -p ~/.config/systemd/user
+mv openchamber-relay-user.service ~/.config/systemd/user/openchamber-relay.service
+rm openchamber-relay.service openchamber-relay.env   # system-scope files, not needed here
+
+# 3. enable
+systemctl --user daemon-reload
+systemctl --user enable --now openchamber-relay
+loginctl enable-linger "$USER"   # autostart at boot / survive logout
+```
+
+Prefer the system scope anyway? `sudo cp openchamber-relay.service /etc/systemd/system/`,
+`sudo cp openchamber-relay.env /etc/openchamber-relay/env`, then
+`sudo systemctl daemon-reload && sudo systemctl enable --now openchamber-relay`.
+
+### Adjusting settings
+
+The user unit defaults to `PORT=8080` / `RELAY_VERIFY_AUTH=false`; use a
+drop-in override instead of editing the unit:
+
+```bash
+mkdir -p ~/.config/systemd/user/openchamber-relay.service.d
+printf '[Service]\nEnvironment=PORT=9000\n' \
+  > ~/.config/systemd/user/openchamber-relay.service.d/override.conf
+systemctl --user daemon-reload && systemctl --user restart openchamber-relay
+```
+
+System scope: edit `/etc/openchamber-relay/env` and
+`sudo systemctl restart openchamber-relay`.
 
 ## Repository layout
 
@@ -136,7 +206,7 @@ Two independent release cadences, one per artifact:
 | Trigger | What happens |
 |---|---|
 | push to `master` (relay changes) | multi-arch image `relay:sha-<commit>` on GHCR — no version tag |
-| push tag `vX.Y.Z` | image `relay:vX.Y.Z` + `relay:latest` on GHCR, plus a GitHub Release with cross-compiled binaries: `linux/{amd64,arm64,arm,386}`, `darwin/{amd64,arm64}` (tar.gz + checksums) |
+| push tag `vX.Y.Z` | image `relay:vX.Y.Z` + `relay:latest` on GHCR, plus a GoReleaser GitHub Release: cross-compiled binaries `linux/{amd64,arm64,armv7,386}` + `darwin/{amd64,arm64}` (tar.gz, both systemd units included, checksums) and `deb`/`rpm` packages (system & user units, `/etc/openchamber-relay/env`) |
 
 **OpenChamber image (tracks upstream, decoupled from this repo's git tags)**
 

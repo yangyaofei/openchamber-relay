@@ -94,10 +94,78 @@ wss://relay.your.domain.example/relay/ws
 
 - **反向代理 + TLS（推荐）**：用任意支持 WebSocket 的代理（Nginx、Caddy、
   Traefik 等）把流量转到 `${RELAY_PORT}`，客户端即可用 `wss://` 接入；
+- **Tailscale Funnel**：机器已在你的 tailnet 里的话，`tailscale funnel 8080`
+  一条命令发布端口并自带 TLS——免域名、免证书、免公网 IP，客户端用分配的
+  `https://<机器名>.<tailnet>.ts.net` 地址即可；
 - **裸跑**：`.env` 里 `RELAY_BIND=0.0.0.0`，客户端用 `ws://` 直连
   （明文，仅测试用）。
 
 客户端填的 Relay 地址由你的暴露方式决定（域名/路径/端口自定）。
+
+## 裸机部署（不用 Docker）
+
+Relay 是单个静态二进制，Docker 完全可选。从
+[releases](https://github.com/yangyaofei/openchamber-relay/releases) 下载
+（每个 tar.gz 里同时带二进制**和两个 systemd unit 文件**），或
+`go install github.com/yangyaofei/openchamber-relay/relay@latest`。
+
+### 方式一：deb / rpm（装时一次 sudo，system / user scope 自选）
+
+```bash
+# deb
+sudo apt install ./openchamber-relay_<version>_linux_amd64.deb
+# rpm
+sudo dnf install ./openchamber-relay_<version>_linux_amd64.rpm
+```
+
+包内容：二进制装到 `/usr/bin/openchamber-relay`、两套 systemd unit、
+`/etc/openchamber-relay/env`。安装后不会自动启动，自选 scope：
+
+```bash
+# system scope（以动态临时用户运行，开机自启）
+sudo systemctl enable --now openchamber-relay
+
+# user scope（以当前用户运行，之后全程免 sudo）
+systemctl --user enable --now openchamber-relay
+loginctl enable-linger "$USER"   # 开机自启 / 登出不停止
+```
+
+### 方式二：tar.gz（完全无 sudo）
+
+```bash
+# 1. 解压，二进制放到 PATH
+tar -xzf openchamber-relay_<version>_linux_amd64.tar.gz
+mkdir -p ~/.local/bin && mv openchamber-relay ~/.local/bin/
+
+# 2. 安装 user unit（两个 unit 文件都在 tar 包里）
+mkdir -p ~/.config/systemd/user
+mv openchamber-relay-user.service ~/.config/systemd/user/openchamber-relay.service
+rm openchamber-relay.service openchamber-relay.env   # system scope 的文件，这里用不上
+
+# 3. 启用
+systemctl --user daemon-reload
+systemctl --user enable --now openchamber-relay
+loginctl enable-linger "$USER"   # 开机自启 / 登出不停止
+```
+
+如果还是要 system scope：`sudo cp openchamber-relay.service /etc/systemd/system/`、
+`sudo cp openchamber-relay.env /etc/openchamber-relay/env`，然后
+`sudo systemctl daemon-reload && sudo systemctl enable --now openchamber-relay`。
+
+### 改配置
+
+user unit 默认 `PORT=8080` / `RELAY_VERIFY_AUTH=false`，用 drop-in 覆盖，
+不要直接改 unit：
+
+```bash
+mkdir -p ~/.config/systemd/user/openchamber-relay.service.d
+printf '[Service]\nEnvironment=PORT=9000\n' \
+  > ~/.config/systemd/user/openchamber-relay.service.d/override.conf
+systemctl --user daemon-reload && systemctl --user restart openchamber-relay
+```
+
+system scope：编辑 `/etc/openchamber-relay/env` 后
+`sudo systemctl restart openchamber-relay`。
 
 ## 仓库结构
 
@@ -127,7 +195,7 @@ openchamber-relay/
 | 触发 | 产物 |
 |---|---|
 | push 到 `master`（relay 有变更） | 多架构镜像 `relay:sha-<commit>` 推 GHCR，不带版本 tag |
-| 打 tag `vX.Y.Z` | 镜像 `relay:vX.Y.Z` + `relay:latest` 推 GHCR，并创建 GitHub Release，附交叉编译二进制：`linux/{amd64,arm64,arm,386}`、`darwin/{amd64,arm64}`（tar.gz + checksums） |
+| 打 tag `vX.Y.Z` | 镜像 `relay:vX.Y.Z` + `relay:latest` 推 GHCR，并由 GoReleaser 创建 GitHub Release：交叉编译二进制 `linux/{amd64,arm64,armv7,386}` + `darwin/{amd64,arm64}`（tar.gz，内含两个 systemd unit，附 checksums）及 `deb`/`rpm` 包（system + user 双 unit、`/etc/openchamber-relay/env`） |
 
 **OpenChamber 镜像（跟踪上游，与本仓库 git tag 完全解耦）**
 
