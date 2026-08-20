@@ -112,6 +112,38 @@ Containers bind loopback by default. The relay's WebSocket endpoint is
 The relay address clients use depends on your exposure setup (domain /
 path / port of your choosing).
 
+## Pointing an OpenChamber instance at your relay
+
+Remote clients are only half of the picture — the OpenChamber instance
+itself (the **server** deployment above, or the **desktop app**, which
+runs the same server in-process) must dial your relay as its host.
+Out of the box OpenChamber uses the official `wss://relay.openchamber.dev/ws`;
+switch it to your self-hosted relay with either method:
+
+**Method 1: the OpenChamber settings file** (`~/.config/openchamber/settings.json`,
+shared by desktop and server; honor `OPENCHAMBER_DATA_DIR` if you set it):
+
+```json
+{
+  "privateRelay": {
+    "enabled": true,
+    "relayUrl": "wss://relay.your.domain.example/relay/ws"
+  }
+}
+```
+
+Then restart OpenChamber (or toggle the relay off/on in its remote-pairing
+settings UI, which writes the same file).
+
+**Method 2: the `OPENCHAMBER_RELAY_URL` environment variable** — pins the
+endpoint at the deployment level and overrides the stored setting entirely
+(the UI shows it as locked). This is what the Mode A compose file above
+passes into the openchamber container.
+
+Once the host side is set, pair your mobile clients as usual: the pairing
+offer automatically carries your relay address, so clients inherit it —
+no per-device relay configuration needed.
+
 ## Bare-metal deployment (no Docker)
 
 The relay is a single static binary — Docker is entirely optional. Grab a

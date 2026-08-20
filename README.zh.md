@@ -102,6 +102,35 @@ wss://relay.your.domain.example/relay/ws
 
 客户端填的 Relay 地址由你的暴露方式决定（域名/路径/端口自定）。
 
+## 把 OpenChamber 实例指向你的 Relay
+
+远程客户端只是接入方，OpenChamber 实例本身（上面的 **server** 部署，
+或**桌面 App**——它内嵌同一个 server 进程）也要作为 host 拨到你的
+Relay。OpenChamber 默认使用官方 `wss://relay.openchamber.dev/ws`，
+切换到自建 Relay 有两种方式：
+
+**方式一：OpenChamber 设置文件**（`~/.config/openchamber/settings.json`，
+桌面与 server 共用；若设置过 `OPENCHAMBER_DATA_DIR` 则以它为准）：
+
+```json
+{
+  "privateRelay": {
+    "enabled": true,
+    "relayUrl": "wss://relay.your.domain.example/relay/ws"
+  }
+}
+```
+
+改完重启 OpenChamber（或在远程配对设置里把 Relay 关/开一次，效果相同，
+UI 写的就是这个文件）。
+
+**方式二：环境变量 `OPENCHAMBER_RELAY_URL`** —— 部署级锁定端点，完全
+覆盖设置文件里的值（UI 中显示为锁定）。上面用法 A 的 compose 传给
+openchamber 容器的就是它。
+
+Host 侧设置好后，手机客户端照常扫码配对即可：配对 offer 会自动带上
+你的 Relay 地址，客户端自动继承，无需在每台设备上单独配 Relay。
+
 ## 裸机部署（不用 Docker）
 
 Relay 是单个静态二进制，Docker 完全可选。从
