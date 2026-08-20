@@ -126,7 +126,7 @@ openchamber-relay/
 
 | 触发 | 产物 |
 |---|---|
-| push 到 `main`（relay 有变更） | 多架构镜像 `relay:sha-<commit>` 推 GHCR，不带版本 tag |
+| push 到 `master`（relay 有变更） | 多架构镜像 `relay:sha-<commit>` 推 GHCR，不带版本 tag |
 | 打 tag `vX.Y.Z` | 镜像 `relay:vX.Y.Z` + `relay:latest` 推 GHCR，并创建 GitHub Release，附交叉编译二进制：`linux/{amd64,arm64,arm,386}`、`darwin/{amd64,arm64}`（tar.gz + checksums） |
 
 **OpenChamber 镜像（跟踪上游，与本仓库 git tag 完全解耦）**

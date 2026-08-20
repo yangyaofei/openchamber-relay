@@ -135,7 +135,7 @@ Two independent release cadences, one per artifact:
 
 | Trigger | What happens |
 |---|---|
-| push to `main` (relay changes) | multi-arch image `relay:sha-<commit>` on GHCR — no version tag |
+| push to `master` (relay changes) | multi-arch image `relay:sha-<commit>` on GHCR — no version tag |
 | push tag `vX.Y.Z` | image `relay:vX.Y.Z` + `relay:latest` on GHCR, plus a GitHub Release with cross-compiled binaries: `linux/{amd64,arm64,arm,386}`, `darwin/{amd64,arm64}` (tar.gz + checksums) |
 
 **OpenChamber image (tracks upstream, decoupled from this repo's git tags)**

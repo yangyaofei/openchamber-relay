@@ -2,13 +2,13 @@ name: relay-image
 
 # Relay build & release pipeline.
 #
-# push to main (relay changes) -> multi-arch image tagged sha-<short> (no version tag)
+# push to master (relay changes) -> multi-arch image tagged sha-<short> (no version tag)
 # tag v*                      -> multi-arch image vX.Y.Z + :latest
 #                               + GitHub Release with cross-compiled binaries
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     tags: ['v*']
     paths:
       - 'relay/**'
