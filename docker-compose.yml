@@ -26,8 +26,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./data/openchamber:/home/openchamber/.config/openchamber
-      - ./data/ssh:/home/openchamber/.ssh
+      - ${OPENCHAMBER_DATA_DIR:-./data}/openchamber:/home/openchamber/.config/openchamber
+      - ${OPENCHAMBER_DATA_DIR:-./data}/ssh:/home/openchamber/.ssh
       - ${OPENCHAMBER_WORKSPACES_DIR:-./workspaces}:/home/openchamber/workspaces
       # 可选：把宿主机目录挂进容器（按需放开）
       # - /mnt:/mnt

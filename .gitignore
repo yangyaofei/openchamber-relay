@@ -21,3 +21,6 @@ tmp/
 
 # GoReleaser
 dist/
+
+# machine-local compose override
+docker-compose.override.yml
