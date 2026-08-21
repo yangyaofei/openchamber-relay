@@ -263,8 +263,14 @@ arg to pin the npm version.
 
 ## Known trade-offs
 
-- `RELAY_VERIFY_AUTH=false` (default): the protocol supports host-side
-  ECDSA P-256 signature verification, but clients have not adopted it
-  broadly yet; security currently rests on end-to-end encryption.
+- `RELAY_VERIFY_AUTH=false` (default): when enabled, host connections
+  (host-control / host-data) must carry an ECDSA P-256 signature over
+  `{ts}.{serverId}.{role}.{connectionId}` with `serverId` cryptographically
+  bound to the signing key (same scheme as the official relay), blocking
+  serverId squatting on your relay. Kept off by default since traffic is
+  end-to-end encrypted anyway; official hosts always send the signature,
+  so it can be turned on freely.
+- `RELAY_SERVICE_NAME` overrides the `service` field in the `/health`
+  JSON response (default `openchamber-relay`).
 - Containers run as UID 1000 (inherited from the node base image); `./data`
   directory permissions must match.

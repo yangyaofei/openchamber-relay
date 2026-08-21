@@ -21,7 +21,7 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -34,6 +34,10 @@ func main() {
 	}
 
 	verifyAuth := os.Getenv("RELAY_VERIFY_AUTH") == "true"
+	serviceName := os.Getenv("RELAY_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "openchamber-relay"
+	}
 
 	r := newRelay(verifyAuth)
 	r.startSweeper()
@@ -41,8 +45,12 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", r.handleWebSocket)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"ok":      "true",
+			"service": serviceName,
+		})
 	})
 
 	addr := ":" + port

@@ -5,55 +5,103 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"log"
 	"math/big"
+	"time"
 )
 
-// verifyAuth validates the ECDSA P-256 signature a host sends when connecting.
-//
-// The signed payload is "ts.serverId.role.connectionId" and the signature is
-// the raw concatenation of r and s (each 32 bytes for P-256). The public key
-// travels alongside the signature as a base64url uncompressed point. This is
-// an optional defense-in-depth layer: enable with RELAY_VERIFY_AUTH=true. The
-// application traffic itself is always end-to-end encrypted by the peers.
+// authTolerance is how far a signed timestamp may drift from relay clock
+// time. Replay-protection window for the host handshake.
+const authTolerance = 5 * time.Minute
+
+// verifyAuth validates the relay-layer auth a host sends when connecting and
+// enforces a replay window. See verifyAuthCrypto for the protocol details.
 func verifyAuth(serverId, role, connectionId, tsStr, sigStr, pkStr string) bool {
-	if tsStr == "" || sigStr == "" || pkStr == "" {
+	var ts int64
+	if _, err := fmt.Sscanf(tsStr, "%d", &ts); err != nil {
 		return false
 	}
+	drift := time.Since(time.UnixMilli(ts))
+	if drift < 0 {
+		drift = -drift
+	}
+	if drift > authTolerance {
+		log.Printf("[relay] auth ts out of tolerance: %s (drift %v)", tsStr, drift)
+		return false
+	}
+	return verifyAuthCrypto(serverId, role, connectionId, tsStr, sigStr, pkStr)
+}
+
+// verifyAuthCrypto validates the relay-layer auth a host sends when connecting,
+// matching the upstream OpenChamber protocol exactly
+// (packages/web/server/lib/relay/{identity,signing-key,host-client}.js):
+//
+//   - pk  = base64url(UTF-8 JSON string of the canonical public JWK,
+//     i.e. `{"crv":...,"kty":...,"x":...,"y":...}` with fixed key order)
+//   - serverId = base64url(SHA-256(canonical public JWK string))
+//   - sig  = base64url(ECDSA-SHA256 over "{ts}.{serverId}.{role}.{connectionId}",
+//     IEEE P1363 raw r||s encoding)
+//
+// The check proves the peer holds the private key belonging to serverId, so
+// a stranger cannot squat a serverId on this relay. Application traffic is
+// always end-to-end encrypted regardless; this is an anti-impersonation /
+// anti-squat layer only. Enable with RELAY_VERIFY_AUTH=true.
+func verifyAuthCrypto(serverId, role, connectionId, tsStr, sigStr, pkStr string) bool {
+	// 1. Decode and parse the canonical public JWK.
 	pkBytes, err := base64.RawURLEncoding.DecodeString(pkStr)
 	if err != nil {
 		return false
 	}
-	sigBytes, err := base64.RawURLEncoding.DecodeString(sigStr)
-	if err != nil {
+	var jwk struct {
+		Crv string `json:"crv"`
+		Kty string `json:"kty"`
+		X   string `json:"x"`
+		Y   string `json:"y"`
+	}
+	if err := json.Unmarshal(pkBytes, &jwk); err != nil {
 		return false
 	}
-	x, y, err := parseUncompressedPubKey(pkBytes)
-	if err != nil {
+	if jwk.Kty != "EC" || jwk.Crv != "P-256" {
+		return false
+	}
+	xb, err := base64.RawURLEncoding.DecodeString(jwk.X)
+	if err != nil || len(xb) != 32 {
+		return false
+	}
+	yb, err := base64.RawURLEncoding.DecodeString(jwk.Y)
+	if err != nil || len(yb) != 32 {
+		return false
+	}
+	x := new(big.Int).SetBytes(xb)
+	y := new(big.Int).SetBytes(yb)
+	if !elliptic.P256().IsOnCurve(x, y) {
+		return false
+	}
+
+	// 2. serverId binding: SHA-256(canonical JWK string) must equal serverId.
+	// The decoded pkBytes ARE the canonical JWK string bytes, so this is both
+	// the identity check and protection against squatted serverIds.
+	sum := sha256.Sum256(pkBytes)
+	expectedId := base64.RawURLEncoding.EncodeToString(sum[:])
+	if expectedId != serverId {
+		return false
+	}
+
+	// 3. Signature over "{ts}.{serverId}.{role}.{connectionId}", P1363 r||s.
+	sigBytes, err := base64.RawURLEncoding.DecodeString(sigStr)
+	if err != nil || len(sigBytes) != 64 {
 		return false
 	}
 	payload := fmt.Sprintf("%s.%s.%s.%s", tsStr, serverId, role, connectionId)
-	hash := sha256.Sum256([]byte(payload))
-	sigLen := len(sigBytes)
-	if sigLen%2 != 0 || sigLen < 64 {
+	digest := sha256.Sum256([]byte(payload))
+	pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
+	rVal := new(big.Int).SetBytes(sigBytes[:32])
+	sVal := new(big.Int).SetBytes(sigBytes[32:])
+	if !ecdsa.Verify(pub, digest[:], rVal, sVal) {
 		return false
 	}
-	half := sigLen / 2
-	rVal := new(big.Int).SetBytes(sigBytes[:half])
-	sVal := new(big.Int).SetBytes(sigBytes[half:])
-	return ecdsa.Verify(&ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}, hash[:], rVal, sVal)
-}
 
-// parseUncompressedPubKey decodes a 65-byte SEC 1 uncompressed P-256 public
-// key (0x04 || X || Y) and verifies the point is on the curve.
-func parseUncompressedPubKey(raw []byte) (*big.Int, *big.Int, error) {
-	if len(raw) != 65 || raw[0] != 0x04 {
-		return nil, nil, fmt.Errorf("invalid uncompressed public key")
-	}
-	x := new(big.Int).SetBytes(raw[1:33])
-	y := new(big.Int).SetBytes(raw[33:65])
-	if !elliptic.P256().IsOnCurve(x, y) {
-		return nil, nil, fmt.Errorf("point not on curve")
-	}
-	return x, y, nil
+	return true
 }

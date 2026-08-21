@@ -248,6 +248,11 @@ OpenChamber 镜像支持 `OPENCHAMBER_VERSION` build arg 指定 npm 版本。
 
 ## 已知取舍
 
-- `RELAY_VERIFY_AUTH=false`（默认）：协议已支持 host 端 ECDSA P-256 签名
-  校验，但客户端侧尚未全面启用，当前依赖端到端加密保证安全。
+- `RELAY_VERIFY_AUTH=false`（默认）：开启后，host 连接（host-control /
+  host-data）必须携带对 `{ts}.{serverId}.{role}.{connectionId}` 的
+  ECDSA P-256 签名，且 serverId 与签名密钥密码学绑定（与官方 relay
+  同一套方案），可阻止他人在你的 relay 上冒占 serverId。因流量本身
+  端到端加密，默认关闭；官方 host 始终发送签名，可随时开启。
+- `RELAY_SERVICE_NAME` 覆盖 `/health` JSON 返回中的 `service` 字段
+  （默认 `openchamber-relay`）。
 - 容器以 UID 1000 运行（复用 node 基础镜像用户），`./data` 目录权限需匹配。
