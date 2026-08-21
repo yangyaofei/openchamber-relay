@@ -2,126 +2,172 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-Deployment orchestration and companion components for self-hosting
-[OpenChamber](https://github.com/openchamber/openchamber): a small Go
-WebSocket relay (`relay/`), Docker Compose stacks, and GitHub Actions CI/CD
-that auto-builds images whenever upstream `@openchamber/web` publishes a
-release.
+A self-contained Go WebSocket relay that lets remote [OpenChamber](https://github.com/openchamber/openchamber)
+clients (mobile apps, browsers on other machines) reach your OpenChamber
+instance through NAT/firewalls. The relay never inspects application
+traffic: clients and OpenChamber exchange end-to-end encrypted frames
+(ECDH + AES-GCM, negotiated at pairing); the relay only pairs sockets and
+forwards opaque messages. Protocol details in [relay/README.md](relay/README.md).
 
-**Goal**: let OpenChamber clients on the public internet (mobile apps,
-browsers on other machines) reach any OpenChamber instance through NAT or
-firewalls — whether it is a self-hosted server or the app on your desktop.
+## Step 1: pick a deployment shape
 
-## Two deployment modes
+Two shapes, independent of how you install things:
 
-| | Mode A: combined | Mode B: relay-only |
+| | Shape A: Relay + OpenChamber on one box | Shape B: relay-only |
 |---|---|---|
-| Compose file | `docker-compose.yml` | `docker-compose.relay.yml` |
-| What runs | OpenChamber server + relay on one host | Just the relay |
-| For whom | All-in-one deployment on your home/LAN server | A public VPS relaying for all your devices |
-| Who connects | The local OpenChamber (server process) | Any OpenChamber instance (desktop app / server) — just point its relay setting at this relay |
+| Runs | OpenChamber service + relay, same machine | Just the relay |
+| Fits | All-in-one on a home/lan machine | Public VPS serving all your devices |
+| Who connects | The local OpenChamber | Any OpenChamber instance (desktop app / server), configured with your relay URL |
 
 ```
-Mode A (combined)                       Mode B (relay-only)
-Remote client                           Remote client
-│ wss                                   │ wss
-▼                                       ▼
-Router 9527 ─► LAN 443                  Relay (public VPS)
-▼                                         │ pairs + forwards opaque
-Host reverse proxy (:443)                 │ frames; traffic is E2E
-├─ /relay/* ─► relay container (23001)    ▼ encrypted
-└─ /*       ─► openchamber container    Any OpenChamber instance
-                 │                        (desktop app or self-hosted
-                 │ OPENCODE_HOST=        server, each joins as host)
-                 ▼
-         Host OpenCode server (:4096)
+Shape A (all-in-one)                     Shape B (relay-only)
+remote clients                           remote clients
+│ wss                                    │ wss
+▼                                        ▼
+host reverse proxy (:443)                Relay (public VPS)
+├─ /relay/* ─► relay                     │ pairing + forwarding only
+└─ /*       ─► openchamber               │ traffic is E2E encrypted
+                  │                      ▼
+                  ▼                    any OpenChamber instance
+          OpenCode server (:4096)       (desktop app or server,
+                                        each dials in as host)
 ```
 
-Key points:
+## Step 2: pick an install & run method
 
-- **Both containers bind loopback by default** (`127.0.0.1:23000/23001`);
-  public exposure is up to your own reverse proxy setup.
-- **The relay never sees your data**: frames between remote clients and
-  OpenChamber are end-to-end encrypted (ECDH + AES-GCM, keys negotiated at
-  pairing); the relay only pairs sockets and forwards opaque messages.
-  See [relay/README.md](relay/README.md).
-- In Mode A, the **OpenCode server runs on the host** and the container
-  reaches it via `host.docker.internal:4096` (injected automatically by
-  compose).
-- **Any public port works**: 9527 in the diagram is just the router-side
-  port mapped to the local 443 — use whatever port you like and keep
-  `OPENCHAMBER_RELAY_URL` consistent with it.
+| Install | Shape A | Shape B | Runs as |
+|---|---|---|---|
+| [Docker Compose](#method-1-docker-compose-recommended) | `docker-compose.yml` | `docker-compose.relay.yml` | container |
+| [Package / binary](#method-2-package--binary-bare-metal) | relay via package + OpenChamber via official npm/desktop app | just the relay | systemd or plain CLI |
+| [Build from source](#method-3-build-from-source) | same | `go build` | same |
 
-## Quick start
+Every install method supports both shapes — the relay itself installs the
+same way; the only difference is the OpenChamber half, which has a ready
+image under Docker and the official npm package / desktop app on bare metal.
 
-### Mode A: combined
+### Method 1: Docker Compose (recommended)
 
-Prerequisites: Docker + Compose v2; `opencode serve` already running on the
-host (default `:4096`).
+Requires Docker + Compose v2.
 
 ```bash
 git clone https://github.com/yangyaofei/openchamber-relay.git
 cd openchamber-relay
-
 cp .env.example .env
-$EDITOR .env        # at least change the two passwords; hostname / relay url as needed
-
-docker compose up -d
-curl http://127.0.0.1:23001/health    # relay health check
+$EDITOR .env
 ```
 
-Open `http://127.0.0.1:23000` in a browser (password: `OPENCHAMBER_UI_PASSWORD`
-from `.env`) and start using it.
+- **Shape A**: the host must already run `opencode serve` (default `:4096`;
+  the container reaches it via `host.docker.internal`). Set at least the two
+  passwords in `.env`, then:
 
-### Mode B: relay-only
+  ```bash
+  docker compose up -d
+  curl http://127.0.0.1:23001/health    # relay health check
+  ```
 
-Prerequisites: a public machine (VPS) + Docker.
+  Open `http://127.0.0.1:23000` in a browser (password:
+  `OPENCHAMBER_UI_PASSWORD`).
+- **Shape B**: set `RELAY_BIND=0.0.0.0` (or run behind a reverse proxy), then:
+
+  ```bash
+  docker compose -f docker-compose.relay.yml up -d
+  ```
+
+Images come from GHCR and update with this repo's releases; upgrade a
+deployment with `docker compose pull && docker compose up -d`.
+
+### Method 2: package / binary (bare metal)
+
+The relay is a single static binary with no runtime dependencies. Get it
+from [releases](https://github.com/yangyaofei/openchamber-relay/releases)
+(each tar.gz carries the binary **and** both systemd unit files), or
+`go install github.com/yangyaofei/openchamber-relay/relay@latest`.
+
+**deb / rpm** (one sudo at install; system or user scope, your choice):
+
+```bash
+sudo apt install ./openchamber-relay_<version>_linux_amd64.deb   # or dnf install the .rpm
+```
+
+Package contents: binary at `/usr/bin/openchamber-relay`, both systemd
+units, `/etc/openchamber-relay/env`. Nothing autostarts; pick a scope:
+
+```bash
+sudo systemctl enable --now openchamber-relay          # system scope
+# or
+systemctl --user enable --now openchamber-relay        # user scope (sudo-free)
+loginctl enable-linger "$USER"                         # autostart for user scope
+```
+
+**tar.gz** (fully sudo-free):
+
+```bash
+tar -xzf openchamber-relay_<version>_linux_amd64.tar.gz
+mkdir -p ~/.local/bin && mv openchamber-relay ~/.local/bin/
+mkdir -p ~/.config/systemd/user
+mv openchamber-relay-user.service ~/.config/systemd/user/openchamber-relay.service
+systemctl --user daemon-reload && systemctl --user enable --now openchamber-relay
+loginctl enable-linger "$USER"
+```
+
+**Run it directly** (no systemd, foreground):
+
+```bash
+PORT=8080 ./openchamber-relay
+```
+
+**Configuration**: for the user unit use a drop-in override
+(`~/.config/systemd/user/openchamber-relay.service.d/override.conf` with
+`[Service]\nEnvironment=PORT=9000`, then daemon-reload + restart); for
+system scope edit `/etc/openchamber-relay/env` and restart.
+
+**Shape A on bare metal**: run the relay as above; the co-located
+OpenChamber is simply the official npm package
+(`npm install -g @openchamber/web`, then `openchamber serve`) or the
+desktop app acting as host — point it at your relay per the next section.
+
+### Method 3: build from source
 
 ```bash
 git clone https://github.com/yangyaofei/openchamber-relay.git
-cd openchamber-relay
-
-cp .env.example .env
-$EDITOR .env        # RELAY_BIND / RELAY_PORT / RELAY_VERIFY_AUTH as needed
-
-docker compose -f docker-compose.relay.yml up -d
+cd openchamber-relay/relay
+go build -o openchamber-relay .
+PORT=8080 ./openchamber-relay
 ```
 
-Then point any OpenChamber instance at it (the remote pairing settings of a
-desktop app, or `OPENCHAMBER_RELAY_URL` of a Mode A server):
+The built binary is equivalent to the release one; run it via the systemd /
+CLI patterns of Method 2 (unit files live in [packaging/](packaging/)).
+The Docker images can be built from this repo too: swap a service's
+`image:` line for the commented `build:` block in the compose file; the
+OpenChamber image accepts an `OPENCHAMBER_VERSION` build arg to pin the
+npm version.
 
-```
-wss://relay.your.domain.example/relay/ws
-```
-
-### Public exposure (either mode, your choice)
+## Public exposure (any method)
 
 Containers bind loopback by default. The relay's WebSocket endpoint is
 `/ws` (health check at `/health`); how you expose it is up to you:
 
 - **Reverse proxy + TLS (recommended)**: any WebSocket-capable proxy
-  (Nginx, Caddy, Traefik, ...) forwarding to `${RELAY_PORT}`; clients then
+  (Nginx, Caddy, Traefik, ...) forwarding to the relay port; clients then
   connect via `wss://`;
 - **Tailscale Funnel**: if the machine is already in your tailnet,
   `tailscale funnel 8080` publishes the port with automatic TLS — no
-  domain, certificate or public IP needed; clients use the provided
-  `https://<machine>.<tailnet>.ts.net` URL;
-- **Bare**: set `RELAY_BIND=0.0.0.0` in `.env`; clients connect with
-  `ws://` in plaintext — testing only.
+  domain, certificate or public IP needed;
+- **Bare**: set `RELAY_BIND=0.0.0.0`; clients connect with `ws://` in
+  plaintext — testing only.
 
-The relay address clients use depends on your exposure setup (domain /
-path / port of your choosing).
+The relay URL clients use follows from your exposure choice
+(domain/path/port are yours).
 
 ## Pointing an OpenChamber instance at your relay
 
-Remote clients are only half of the picture — the OpenChamber instance
-itself (the **server** deployment above, or the **desktop app**, which
-runs the same server in-process) must dial your relay as its host.
-Out of the box OpenChamber uses the official `wss://relay.openchamber.dev/ws`;
-switch it to your self-hosted relay with either method:
+Remote clients are just consumers; the OpenChamber instance itself (a
+server deployment, or the desktop app — it embeds the same server process)
+also dials your relay as a host. OpenChamber defaults to the official
+`wss://relay.openchamber.dev/ws`; two ways to switch:
 
-**Method 1: the OpenChamber settings file** (`~/.config/openchamber/settings.json`,
-shared by desktop and server; honor `OPENCHAMBER_DATA_DIR` if you set it):
+**Option 1: OpenChamber settings file** (`~/.config/openchamber/settings.json`,
+shared by desktop and server; `$OPENCHAMBER_DATA_DIR` wins if set):
 
 ```json
 {
@@ -132,134 +178,45 @@ shared by desktop and server; honor `OPENCHAMBER_DATA_DIR` if you set it):
 }
 ```
 
-Then restart OpenChamber (or toggle the relay off/on in its remote-pairing
-settings UI, which writes the same file).
+Restart OpenChamber after editing (or toggle the relay off/on in the
+remote-pairing settings — same effect, the UI writes this file).
 
-**Method 2: the `OPENCHAMBER_RELAY_URL` environment variable** — pins the
-endpoint at the deployment level and overrides the stored setting entirely
-(the UI shows it as locked). This is what the Mode A compose file above
-passes into the openchamber container.
+**Option 2: environment variable `OPENCHAMBER_RELAY_URL`** — a
+deployment-level pin that overrides the stored setting entirely (shown as
+locked in the UI). Shape A's compose passes exactly this to the
+openchamber container.
 
-Once the host side is set, pair your mobile clients as usual: the pairing
-offer automatically carries your relay address, so clients inherit it —
+Once the host side is set, phone clients pair by QR code as usual: the
+pairing offer carries your relay URL automatically, clients inherit it,
 no per-device relay configuration needed.
 
-## Bare-metal deployment (no Docker)
+## Configuration reference
 
-The relay is a single static binary — Docker is entirely optional. Grab a
-release from [releases](https://github.com/yangyaofei/openchamber-relay/releases)
-(each tar.gz ships the binary **plus both systemd units**), or use
-`go install github.com/yangyaofei/openchamber-relay/relay@latest`.
+The relay's entire configuration is three environment variables (no config
+file, no CLI flags):
 
-### Option 1: deb / rpm (needs sudo once, system or user scope your pick)
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8080` | listen port |
+| `RELAY_VERIFY_AUTH` | `false` | verify host ECDSA P-256 signatures (see trade-offs) |
+| `RELAY_SERVICE_NAME` | `openchamber-relay` | `service` field in the `/health` JSON |
 
-```bash
-# deb
-sudo apt install ./openchamber-relay_<version>_linux_amd64.deb
-# rpm
-sudo dnf install ./openchamber-relay_<version>_linux_amd64.rpm
-```
-
-The package installs the binary to `/usr/bin/openchamber-relay`, both
-systemd units and `/etc/openchamber-relay/env`. Nothing is started
-automatically — pick a scope:
-
-```bash
-# system scope (runs as a transient user, starts at boot)
-sudo systemctl enable --now openchamber-relay
-
-# user scope (runs as you, no sudo needed from here on)
-systemctl --user enable --now openchamber-relay
-loginctl enable-linger "$USER"   # keep it running after logout / start at boot
-```
-
-### Option 2: tar.gz (no sudo at all)
-
-```bash
-# 1. unpack and put the binary on PATH
-tar -xzf openchamber-relay_<version>_linux_amd64.tar.gz
-mkdir -p ~/.local/bin && mv openchamber-relay ~/.local/bin/
-
-# 2. install the user unit (both unit files are inside the tarball)
-mkdir -p ~/.config/systemd/user
-mv openchamber-relay-user.service ~/.config/systemd/user/openchamber-relay.service
-rm openchamber-relay.service openchamber-relay.env   # system-scope files, not needed here
-
-# 3. enable
-systemctl --user daemon-reload
-systemctl --user enable --now openchamber-relay
-loginctl enable-linger "$USER"   # autostart at boot / survive logout
-```
-
-Prefer the system scope anyway? `sudo cp openchamber-relay.service /etc/systemd/system/`,
-`sudo cp openchamber-relay.env /etc/openchamber-relay/env`, then
-`sudo systemctl daemon-reload && sudo systemctl enable --now openchamber-relay`.
-
-### Adjusting settings
-
-The user unit defaults to `PORT=8080` / `RELAY_VERIFY_AUTH=false`; use a
-drop-in override instead of editing the unit:
-
-```bash
-mkdir -p ~/.config/systemd/user/openchamber-relay.service.d
-printf '[Service]\nEnvironment=PORT=9000\n' \
-  > ~/.config/systemd/user/openchamber-relay.service.d/override.conf
-systemctl --user daemon-reload && systemctl --user restart openchamber-relay
-```
-
-System scope: edit `/etc/openchamber-relay/env` and
-`sudo systemctl restart openchamber-relay`.
+Remaining behavior knobs are compile-time constants (64MB max frame, 128
+clients per host, 30s ping / 90s pong, 60s host-disconnect grace, ...),
+documented atop `relay/relay.go`. All Docker Compose knobs (OpenChamber
+passwords, ports, mounts, ...) live in `.env.example`.
 
 ## Repository layout
 
 ```
 openchamber-relay/
-├── docker-compose.yml          Mode A: OpenChamber + relay combined
-├── docker-compose.relay.yml    Mode B: relay-only
-├── .env.example                All configurable options, annotated
-├── docker/
-│   ├── openchamber.Dockerfile  OpenChamber runtime image (version ARG)
-│   └── relay.Dockerfile        Relay image (multi-stage Go build)
-├── relay/                      The Go WebSocket relay
-│   ├── main.go / relay.go / auth.go / sweeper.go
-│   ├── test/smoke.mjs          Smoke test (no real keys required)
-│   └── README.md
-└── .github/workflows/
-    ├── openchamber-image.yml   Track upstream releases, auto-build image
-    └── relay-image.yml         Build image on relay changes
+├── docker-compose.yml          Shape A: OpenChamber + relay, one box
+├── docker-compose.relay.yml    Shape B: relay-only
+├── .env.example                every compose knob, annotated
+├── docker/                     Dockerfiles for both images
+├── packaging/                  systemd units (system / user) + env file
+└── relay/                      Go WebSocket relay source + tests
 ```
-
-## CI / CD
-
-Two independent release cadences, one per artifact:
-
-**Relay (this repo's own releases)**
-
-| Trigger | What happens |
-|---|---|
-| push to `master` (relay changes) | multi-arch image `relay:sha-<commit>` on GHCR — no version tag |
-| push tag `vX.Y.Z` | image `relay:vX.Y.Z` + `relay:latest` on GHCR, plus a GoReleaser GitHub Release: cross-compiled binaries `linux/{amd64,arm64,armv7,386}` + `darwin/{amd64,arm64}` (tar.gz, both systemd units included, checksums) and `deb`/`rpm` packages (system & user units, `/etc/openchamber-relay/env`) |
-
-**OpenChamber image (tracks upstream, decoupled from this repo's git tags)**
-
-| Trigger | What happens |
-|---|---|
-| every 6h poll of npm `@openchamber/web` | diffs npm versions against the image tags already in GHCR and builds every missing one, newest first (rolling window of 20 recent versions; manual dispatch can override version/window) |
-
-Every upstream release version gets exactly one `openchamber:vX.Y.Z` image tag; `openchamber:latest` always points at the newest upstream version. This repo's git tag space stays untouched by upstream. Very old npm versions that no longer install cleanly fail and are skipped automatically — only the latest version is mandatory.
-
-Updating a deployment:
-
-```bash
-docker compose pull && docker compose up -d
-# Mode B: docker compose -f docker-compose.relay.yml pull && docker compose -f docker-compose.relay.yml up -d
-```
-
-## Building locally (without GHCR)
-
-Swap a service's `image:` line for the commented `build:` block in the
-compose file; the OpenChamber image accepts an `OPENCHAMBER_VERSION` build
-arg to pin the npm version.
 
 ## Known trade-offs
 
@@ -270,7 +227,5 @@ arg to pin the npm version.
   serverId squatting on your relay. Kept off by default since traffic is
   end-to-end encrypted anyway; official hosts always send the signature,
   so it can be turned on freely.
-- `RELAY_SERVICE_NAME` overrides the `service` field in the `/health`
-  JSON response (default `openchamber-relay`).
 - Containers run as UID 1000 (inherited from the node base image); `./data`
   directory permissions must match.
