@@ -71,6 +71,7 @@ func (slot *clientSlot) finish() {
 
 // serverState is everything the relay knows about one host serverId.
 type serverState struct {
+	id        string
 	controlWs *websocket.Conn
 	controlWg sync.Mutex // serializes writes on controlWs
 	clients   map[string]*clientSlot
@@ -98,6 +99,7 @@ func (r *relay) getOrCreateServer(serverId string) *serverState {
 	s, ok := r.servers[serverId]
 	if !ok {
 		s = &serverState{
+			id:      serverId,
 			clients: make(map[string]*clientSlot),
 		}
 		r.servers[serverId] = s
@@ -130,7 +132,10 @@ func (r *relay) maybeRemoveServer(serverId string) {
 
 // sendControl writes one control message to the host control socket.
 // Multiple goroutines (handleClient, forwardPair, sweeper) call this, so
-// writes are serialized under controlWg. Returns false when the host is gone.
+// writes are serialized under controlWg. Returns false when the host is
+// gone. A failed write is fatal for the control socket: it is logged and
+// the socket closed, so handleHostControl's reader exits and the grace
+// path takes over — never a silent zombie that eats notifications.
 func (s *serverState) sendControl(msg relayMessage) bool {
 	s.mu.Lock()
 	conn := s.controlWs
@@ -143,6 +148,9 @@ func (s *serverState) sendControl(msg relayMessage) bool {
 	defer s.controlWg.Unlock()
 	conn.SetWriteDeadline(time.Now().Add(writeWait))
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		log.Printf("[relay] control write failed serverId=%s type=%s peer=%s: %v",
+			s.id, msg.Type, conn.RemoteAddr(), err)
+		conn.Close()
 		return false
 	}
 	return true
@@ -224,14 +232,19 @@ func (r *relay) handleHostControl(serverId string, conn *websocket.Conn) {
 	s.mu.Unlock()
 
 	if oldControl != nil {
-		oldControl.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(4001, "Control replaced"))
+		// WriteControl is safe to call concurrently with in-flight
+		// WriteMessage on the same conn (gorilla contract), unlike
+		// WriteMessage which would corrupt the frame stream.
+		oldControl.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(4001, "Control replaced"),
+			time.Now().Add(writeWait))
 		oldControl.Close()
 	}
 
 	s.sendControl(relayMessage{Type: "sync", ConnectionIds: currentClients})
 
-	log.Printf("[relay] host-control connected %s gen=%d (%d pending clients)", serverId, myGen, len(currentClients))
+	log.Printf("[relay] host-control connected %s gen=%d peer=%s (%d pending clients)",
+		serverId, myGen, conn.RemoteAddr(), len(currentClients))
 
 	conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error {
@@ -261,8 +274,14 @@ func (r *relay) handleHostControl(serverId string, conn *websocket.Conn) {
 			case <-done:
 				return
 			case <-ticker.C:
-				conn.SetWriteDeadline(time.Now().Add(writeWait))
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				// WriteControl for pings: gorilla guarantees it may run
+				// concurrently with the WriteMessage in sendControl. Using
+				// WriteMessage here instead raced with control messages and
+				// corrupted the outgoing frame stream (interleaved frames the
+				// host either dropped the connection on, or worse, silently
+				// lost a "connected" notification to).
+				if err := conn.WriteControl(websocket.PingMessage, nil,
+					time.Now().Add(writeWait)); err != nil {
 					return
 				}
 			}
