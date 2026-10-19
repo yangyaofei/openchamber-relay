@@ -27,14 +27,18 @@ ENV NPM_CONFIG_PREFIX=/home/openchamber/.npm-global
 ENV LANG=C.UTF-8
 RUN mkdir -p /home/openchamber/.npm-global /home/openchamber/.local/bin
 
-# The opencode CLI must exist even with an external OPENCODE_HOST: `openchamber
-# serve` resolves the binary unconditionally (bin/cli.js checkOpenCodeCLI
-# throws when missing). @opencode/cli is the v2 CLI that @openchamber/web 2.x
-# pairs with (same version the official image installs); the v1-era
-# `opencode-ai` package (latest 1.19.3) also works but makes the compatibility
-# page report a v1 CLI.
+# 外部 OpenCode server 形态（OPENCODE_HOST + OPENCODE_SKIP_START）：不安装
+# opencode CLI——v2 平台二进制解压约 212MB，且在此形态下从不真正运行。
+# 但 `openchamber serve` 启动时无条件检查 opencode 二进制是否存在
+# （bin/cli.js 的 checkOpenCodeCLI，找不到直接退出，外部形态也一样），
+# 所以用 OPENCODE_BINARY 把检查指到任意可执行文件即可通过。
+# 已在 2.4.0 上 A/B 验证：无 CLI 且无 OPENCODE_BINARY 时 serve 报
+# "Unable to locate the opencode CLI on PATH" 退出；OPENCODE_BINARY=/bin/true
+# 时正常监听、/health 200。若改回容器内自管 OpenCode：删除下面这行 ENV，
+# 并在 npm install 里加回 CLI（@opencode/cli）。
+ENV OPENCODE_BINARY=/bin/true
+
 RUN npm install -g --no-audit --no-fund \
-        @opencode/cli@2.0.32 \
         @openchamber/web@${OPENCHAMBER_VERSION} \
     && npm cache clean --force \
     && openchamber --version || true
