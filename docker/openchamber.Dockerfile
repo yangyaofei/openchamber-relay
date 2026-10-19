@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 # OpenChamber runtime image.
 #
-# Installs @openchamber/web from npm (requires Node >= 22), following the
-# official install.sh flow. OPENCHAMBER_VERSION pins the npm version;
-# CI passes the released tag, "latest" tracks the npm dist-tag.
+# Installs @openchamber/web from npm (2.x declares engines node >= 24.14.0),
+# following the official install.sh flow. OPENCHAMBER_VERSION pins the npm
+# version; CI passes the released tag, "latest" tracks the npm dist-tag.
 
-FROM node:22-slim
+FROM node:24-slim
 
 ARG OPENCHAMBER_VERSION=latest
 
@@ -22,10 +22,19 @@ RUN usermod -l openchamber -d /home/openchamber -m node \
 USER openchamber
 ENV PATH=/home/openchamber/.local/bin:/home/openchamber/.npm-global/bin:$PATH
 ENV NPM_CONFIG_PREFIX=/home/openchamber/.npm-global
+# UTF-8 locale so the built-in terminal handles multibyte input correctly
+# (parity with the official image).
+ENV LANG=C.UTF-8
 RUN mkdir -p /home/openchamber/.npm-global /home/openchamber/.local/bin
 
+# The opencode CLI must exist even with an external OPENCODE_HOST: `openchamber
+# serve` resolves the binary unconditionally (bin/cli.js checkOpenCodeCLI
+# throws when missing). @opencode/cli is the v2 CLI that @openchamber/web 2.x
+# pairs with (same version the official image installs); the v1-era
+# `opencode-ai` package (latest 1.19.3) also works but makes the compatibility
+# page report a v1 CLI.
 RUN npm install -g --no-audit --no-fund \
-        opencode-ai \
+        @opencode/cli@2.0.32 \
         @openchamber/web@${OPENCHAMBER_VERSION} \
     && npm cache clean --force \
     && openchamber --version || true
