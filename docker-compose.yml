@@ -31,13 +31,15 @@ services:
       - ${OPENCHAMBER_WORKSPACES_DIR:-./workspaces}:/home/openchamber/workspaces
       # 可选：把宿主机目录挂进容器（按需放开）
       # - /mnt:/mnt
-      # OpenCode 配置与数据目录。OpenChamber 的插件/agents/commands/skills/MCP
-      # 设置页直接读写本地文件（不经 OpenCode server API），容器内自管 OpenCode 时
-      # 用默认的 ./data/opencode/*；外部 OpenCode（OPENCODE_HOST + OPENCODE_SKIP_START）
-      # 部署时在 .env 里把三者指向宿主机真实目录，容器与 server 共用一份。
+      # OpenCode 配置与数据目录（本仓库按外部 server 形态配置：
+      # OPENCODE_HOST + OPENCODE_SKIP_START）。OpenChamber 的插件/agents/
+      # commands/skills/MCP 设置页直接读写这些目录里的文件（不经 server API），
+      # .env 里把三者指向宿主机真实目录，容器与 server 共用一份。
+      # share/state 的真实写方在宿主机 server，容器只读（:ro）；
+      # 若改回容器内自管 OpenCode，去掉下面两行末尾的 :ro 即可。
       - ${OPENCODE_CONFIG_DIR:-./data/opencode/config}:/home/openchamber/.config/opencode
-      - ${OPENCODE_SHARE_DIR:-./data/opencode/share}:/home/openchamber/.local/share/opencode
-      - ${OPENCODE_STATE_DIR:-./data/opencode/state}:/home/openchamber/.local/state/opencode
+      - ${OPENCODE_SHARE_DIR:-./data/opencode/share}:/home/openchamber/.local/share/opencode:ro
+      - ${OPENCODE_STATE_DIR:-./data/opencode/state}:/home/openchamber/.local/state/opencode:ro
     environment:
       - OPENCODE_HOST=${OPENCODE_HOST:-http://host.docker.internal:4096}
       - OPENCODE_SKIP_START=${OPENCODE_SKIP_START:-true}
