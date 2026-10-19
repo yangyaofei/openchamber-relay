@@ -31,8 +31,13 @@ services:
       - ${OPENCHAMBER_WORKSPACES_DIR:-./workspaces}:/home/openchamber/workspaces
       # 可选：把宿主机目录挂进容器（按需放开）
       # - /mnt:/mnt
-      # 可选：复用宿主机 opencode 登录凭据（只读）
-      # - ${HOME}/.local/share/opencode/auth.json:/home/openchamber/.local/share/opencode/auth.json:ro
+      # OpenCode 配置与数据目录。OpenChamber 的插件/agents/commands/skills/MCP
+      # 设置页直接读写本地文件（不经 OpenCode server API），容器内自管 OpenCode 时
+      # 用默认的 ./data/opencode/*；外部 OpenCode（OPENCODE_HOST + OPENCODE_SKIP_START）
+      # 部署时在 .env 里把三者指向宿主机真实目录，容器与 server 共用一份。
+      - ${OPENCODE_CONFIG_DIR:-./data/opencode/config}:/home/openchamber/.config/opencode
+      - ${OPENCODE_SHARE_DIR:-./data/opencode/share}:/home/openchamber/.local/share/opencode
+      - ${OPENCODE_STATE_DIR:-./data/opencode/state}:/home/openchamber/.local/state/opencode
     environment:
       - OPENCODE_HOST=${OPENCODE_HOST:-http://host.docker.internal:4096}
       - OPENCODE_SKIP_START=${OPENCODE_SKIP_START:-true}
